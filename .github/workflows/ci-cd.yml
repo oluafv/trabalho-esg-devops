@@ -1,0 +1,225 @@
+name: CI/CD Pipeline - Microsservico ESG Cidades Inteligentes
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+      - staging
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+    inputs:
+      target_env:
+        description: "Ambiente para Deploy Manual"
+        required: true
+        default: "staging"
+        type: choice
+        options:
+          - "staging"
+          - "production"
+          - "both"
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  # ========================================================
+  # ETAPA 1: BUILD & TESTES AUTOMATIZADOS (CI)
+  # ========================================================
+  build-and-test:
+    name: "1. Build e Testes Automatizados"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "Checkout do Repositório"
+        uses: actions/checkout@v4
+
+      - name: "Configurar JDK 21 (Temurin)"
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: "Permissao de execucao no Maven Wrapper"
+        run: chmod +x mvnw
+
+      - name: "Compilacao do Projeto (Build Automático)"
+        run: ./mvnw clean compile -B
+
+      - name: "Execucao de Testes Automatizados"
+        run: ./mvnw test -B
+
+      - name: "Empacotamento da Aplicacao (.jar)"
+        run: ./mvnw package -DskipTests=true -B
+
+      - name: "Upload do Artefato JAR"
+        uses: actions/upload-artifact@v4
+        with:
+          name: fiap-esg-app-jar
+          path: target/*.jar
+          retention-days: 5
+
+      - name: "Upload dos Relatorios de Testes Surefire"
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-test-reports
+          path: target/surefire-reports/
+          retention-days: 5
+
+  # ========================================================
+  # ETAPA 2: CONTAINERIZACAO DOCKER
+  # ========================================================
+  docker-build:
+    name: "2. Build e Push da Imagem Docker"
+    needs: build-and-test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: "Checkout do Repositório"
+        uses: actions/checkout@v4
+
+      - name: "Configurar Docker Buildx"
+        uses: docker/setup-buildx-action@v3
+
+      - name: "Login no GitHub Container Registry (GHCR)"
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Definir Tags de Imagem"
+        id: meta
+        run: |
+          IMAGE_NAME="ghcr.io/${{ github.repository_owner }}/fiap-esg-app"
+          IMAGE_NAME=$(echo "$IMAGE_NAME" | tr '[:upper:]' '[:lower:]')
+          echo "image_name=$IMAGE_NAME" >> $GITHUB_OUTPUT
+          
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          else
+            echo "tag=staging" >> $GITHUB_OUTPUT
+          fi
+
+      - name: "Construir e Publicar Imagem Docker"
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.image_name }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ========================================================
+  # ETAPA 3: DEPLOY EM AMBIENTE DE STAGING (HOMOLOGACAO)
+  # ========================================================
+  deploy-staging:
+    name: "3. Deploy em Staging"
+    needs: [build-and-test, docker-build]
+    runs-on: ubuntu-latest
+    if: |
+      github.ref == 'refs/heads/staging' ||
+      github.ref == 'refs/heads/develop' ||
+      github.ref == 'refs/heads/main' ||
+      github.event.inputs.target_env == 'staging' ||
+      github.event.inputs.target_env == 'both'
+    environment:
+      name: staging
+      url: http://staging.fiap-esg.local:8081
+
+    steps:
+      - name: "Checkout do Repositório"
+        uses: actions/checkout@v4
+
+      - name: "Validacao do Manifesto Docker Compose Staging"
+        run: |
+          docker compose -f docker-compose.staging.yml config
+
+      - name: "Execucao do Deploy em Ambiente Staging"
+        run: |
+          echo "=========================================================="
+          echo ">> Iniciando Deploy no Ambiente de STAGING..."
+          echo ">> Imagem utilizada: ghcr.io/${{ github.repository_owner }}/fiap-esg-app:staging"
+          echo ">> Porta de exposição Staging: 8081"
+          echo ">> Profile ativo: staging"
+          echo "=========================================================="
+          # Sobe os containers de Staging em modo detached
+          docker compose -f docker-compose.staging.yml up -d --build
+          sleep 5
+          docker compose -f docker-compose.staging.yml ps
+
+      - name: "Smoke Test & Healthcheck em Staging"
+        run: |
+          echo ">> Verificando status dos containers em Staging..."
+          CONTAINERS=$(docker ps --filter "name=staging" --format "{{.Names}} - {{.Status}}")
+          echo "$CONTAINERS"
+          if [ -z "$CONTAINERS" ]; then
+            echo "ERRO: Nenhum container de staging encontrado em execucao."
+            exit 1
+          fi
+          echo ">> Deploy em Staging concluido com sucesso e validado!"
+
+      - name: "Teardown do Runner de Staging"
+        if: always()
+        run: |
+          docker compose -f docker-compose.staging.yml down -v
+
+  # ========================================================
+  # ETAPA 4: DEPLOY EM AMBIENTE DE PRODUCAO
+  # ========================================================
+  deploy-production:
+    name: "4. Deploy em Produção"
+    needs: [build-and-test, docker-build, deploy-staging]
+    runs-on: ubuntu-latest
+    if: |
+      github.ref == 'refs/heads/main' ||
+      github.event.inputs.target_env == 'production' ||
+      github.event.inputs.target_env == 'both'
+    environment:
+      name: production
+      url: http://prod.fiap-esg.local:8080
+
+    steps:
+      - name: "Checkout do Repositório"
+        uses: actions/checkout@v4
+
+      - name: "Validacao do Manifesto Docker Compose Producao"
+        run: |
+          docker compose -f docker-compose.prod.yml config
+
+      - name: "Execucao do Deploy em Ambiente Producao"
+        run: |
+          echo "=========================================================="
+          echo ">> Iniciando Deploy no Ambiente de PRODUÇÃO..."
+          echo ">> Imagem utilizada: ghcr.io/${{ github.repository_owner }}/fiap-esg-app:latest"
+          echo ">> Porta de exposição Produção: 8080"
+          echo ">> Profile ativo: prod"
+          echo "=========================================================="
+          docker compose -f docker-compose.prod.yml up -d --build
+          sleep 5
+          docker compose -f docker-compose.prod.yml ps
+
+      - name: "Smoke Test & Healthcheck em Produção"
+        run: |
+          echo ">> Verificando status dos containers de Produção..."
+          CONTAINERS=$(docker ps --filter "name=prod" --format "{{.Names}} - {{.Status}}")
+          echo "$CONTAINERS"
+          if [ -z "$CONTAINERS" ]; then
+            echo "ERRO: Nenhum container de producao encontrado em execucao."
+            exit 1
+          fi
+          echo ">> Deploy em Produção realizado com sucesso!"
+
+      - name: "Teardown do Runner de Produção"
+        if: always()
+        run: |
+          docker compose -f docker-compose.prod.yml down -v

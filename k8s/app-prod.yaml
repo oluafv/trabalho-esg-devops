@@ -1,0 +1,92 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: esg-config-prod
+  namespace: fiap-esg-prod
+data:
+  DB_URL: "jdbc:oracle:thin:@oracle-service.fiap-esg-prod.svc.cluster.local:1521/xepdb1"
+  SPRING_PROFILES_ACTIVE: "prod"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: esg-secrets
+  namespace: fiap-esg-prod
+type: Opaque
+stringData:
+  DB_USERNAME: "SYSTEM"
+  DB_PASSWORD: "slender666"
+  JWT_SECRET: "prod_jwt_super_secret_key_fiap_esg_2026"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fiap-esg-app-prod
+  namespace: fiap-esg-prod
+  labels:
+    app: fiap-esg-app
+    env: prod
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fiap-esg-app
+  template:
+    metadata:
+      labels:
+        app: fiap-esg-app
+        env: prod
+    spec:
+      containers:
+        - name: esg-app
+          image: ghcr.io/seu-usuario/trabalho_microsservicos:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: esg-config-prod
+                  key: DB_URL
+            - name: SPRING_PROFILES_ACTIVE
+              valueFrom:
+                configMapKeyRef:
+                  name: esg-config-prod
+                  key: SPRING_PROFILES_ACTIVE
+            - name: DB_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: esg-secrets
+                  key: DB_USERNAME
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: esg-secrets
+                  key: DB_PASSWORD
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: esg-secrets
+                  key: JWT_SECRET
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "250m"
+            limits:
+              memory: "1024Mi"
+              cpu: "1000m"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fiap-esg-service-prod
+  namespace: fiap-esg-prod
+spec:
+  type: LoadBalancer
+  selector:
+    app: fiap-esg-app
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 8080

@@ -1,0 +1,58 @@
+services:
+  # ========================================================
+  # Banco de Dados Oracle XE (Persistencia ESG)
+  # ========================================================
+  oracle-db:
+    image: gvenzl/oracle-xe:21-slim
+    container_name: oracle-fiap-esg
+    restart: unless-stopped
+    environment:
+      - ORACLE_PASSWORD=${DB_PASSWORD:-slender666}
+      - APP_USER=${DB_USERNAME:-SYSTEM}
+      - APP_PASSWORD=${DB_PASSWORD:-slender666}
+    ports:
+      - "${HOST_DB_PORT:-1522}:1521"
+    volumes:
+      - oracle-data:/opt/oracle/oradata
+    networks:
+      - esg-network
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/oracle/checkDBStatus.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+
+  # ========================================================
+  # Aplicacao Microsservico Spring Boot ESG
+  # ========================================================
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fiap-esg-app
+    restart: unless-stopped
+    depends_on:
+      oracle-db:
+        condition: service_healthy
+    environment:
+      - DB_URL=jdbc:oracle:thin:@oracle-db:1521/xepdb1
+      - DB_USERNAME=${DB_USERNAME:-SYSTEM}
+      - DB_PASSWORD=${DB_PASSWORD:-slender666}
+      - JWT_SECRET=${JWT_SECRET:-fiap_esg_secret_key_2026}
+      - SPRING_PROFILES_ACTIVE=${ENV_PROFILE:-prod}
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    networks:
+      - esg-network
+
+# ==========================================================
+# Redes e Volumes Compartilhados (Requisitos DevOps)
+# ==========================================================
+networks:
+  esg-network:
+    driver: bridge
+
+volumes:
+  oracle-data:
+    driver: local
