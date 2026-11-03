@@ -1,0 +1,68 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: oracle-pvc
+  namespace: fiap-esg-prod
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oracle-db
+  namespace: fiap-esg-prod
+  labels:
+    app: oracle-db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oracle-db
+  template:
+    metadata:
+      labels:
+        app: oracle-db
+    spec:
+      containers:
+        - name: oracle-xe
+          image: gvenzl/oracle-xe:21-slim
+          env:
+            - name: ORACLE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: esg-secrets
+                  key: DB_PASSWORD
+            - name: APP_USER
+              value: SYSTEM
+            - name: APP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: esg-secrets
+                  key: DB_PASSWORD
+          ports:
+            - containerPort: 1521
+              name: oracle-port
+          volumeMounts:
+            - mountPath: /opt/oracle/oradata
+              name: oracle-storage
+      volumes:
+        - name: oracle-storage
+          persistentVolumeClaim:
+            claimName: oracle-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: oracle-service
+  namespace: fiap-esg-prod
+spec:
+  selector:
+    app: oracle-db
+  ports:
+    - protocol: TCP
+      port: 1521
+      targetPort: 1521

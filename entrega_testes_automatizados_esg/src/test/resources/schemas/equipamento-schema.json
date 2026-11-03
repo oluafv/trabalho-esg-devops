@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Equipamento",
+  "type": "object",
+  "required": ["id", "nome", "setor", "limiteConsumoKwh", "status"],
+  "properties": {
+    "id": {
+      "type": "integer"
+    },
+    "nome": {
+      "type": "string"
+    },
+    "setor": {
+      "type": "string"
+    },
+    "limiteConsumoKwh": {
+      "type": "number"
+    },
+    "status": {
+      "type": "string"
+    }
+  },
+  "additionalProperties": false
+}

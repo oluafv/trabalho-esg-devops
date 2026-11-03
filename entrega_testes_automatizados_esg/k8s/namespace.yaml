@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fiap-esg-staging
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fiap-esg-prod

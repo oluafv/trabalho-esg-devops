@@ -1,0 +1,48 @@
+services:
+  oracle-db-staging:
+    image: gvenzl/oracle-xe:21-slim
+    container_name: oracle-fiap-esg-staging
+    restart: unless-stopped
+    environment:
+      - ORACLE_PASSWORD=${STAGING_DB_PASSWORD:-slender666}
+      - APP_USER=${STAGING_DB_USER:-SYSTEM}
+      - APP_PASSWORD=${STAGING_DB_PASSWORD:-slender666}
+    ports:
+      - "1523:1521"
+    volumes:
+      - oracle-data-staging:/opt/oracle/oradata
+    networks:
+      - esg-staging-network
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/oracle/checkDBStatus.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+
+  app-staging:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fiap-esg-app-staging
+    restart: unless-stopped
+    depends_on:
+      - oracle-db-staging
+    environment:
+      - DB_URL=jdbc:oracle:thin:@oracle-db-staging:1521/xepdb1
+      - DB_USERNAME=${STAGING_DB_USER:-SYSTEM}
+      - DB_PASSWORD=${STAGING_DB_PASSWORD:-slender666}
+      - JWT_SECRET=${STAGING_JWT_SECRET:-staging_secret_key_fiap_esg}
+      - SPRING_PROFILES_ACTIVE=staging
+    ports:
+      - "8081:8080"
+    networks:
+      - esg-staging-network
+
+networks:
+  esg-staging-network:
+    driver: bridge
+
+volumes:
+  oracle-data-staging:
+    driver: local

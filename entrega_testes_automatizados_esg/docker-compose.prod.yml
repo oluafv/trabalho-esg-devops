@@ -1,0 +1,58 @@
+services:
+  oracle-db-prod:
+    image: gvenzl/oracle-xe:21-slim
+    container_name: oracle-fiap-esg-prod
+    restart: always
+    environment:
+      - ORACLE_PASSWORD=${PROD_DB_PASSWORD:-slender666}
+      - APP_USER=${PROD_DB_USER:-SYSTEM}
+      - APP_PASSWORD=${PROD_DB_PASSWORD:-slender666}
+    ports:
+      - "1521:1521"
+    volumes:
+      - oracle-data-prod:/opt/oracle/oradata
+    networks:
+      - esg-prod-network
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/oracle/checkDBStatus.sh"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 40s
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2048M
+
+  app-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: fiap-esg-app-prod
+    restart: always
+    depends_on:
+      - oracle-db-prod
+    environment:
+      - DB_URL=jdbc:oracle:thin:@oracle-db-prod:1521/xepdb1
+      - DB_USERNAME=${PROD_DB_USER:-SYSTEM}
+      - DB_PASSWORD=${PROD_DB_PASSWORD:-slender666}
+      - JWT_SECRET=${PROD_JWT_SECRET:-prod_super_secret_fiap_esg_2026}
+      - SPRING_PROFILES_ACTIVE=prod
+    ports:
+      - "8080:8080"
+    networks:
+      - esg-prod-network
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1024M
+
+networks:
+  esg-prod-network:
+    driver: bridge
+
+volumes:
+  oracle-data-prod:
+    driver: local
